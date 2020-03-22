@@ -7,11 +7,7 @@ defmodule Imgex do
   Provides configured source information when it's not passed explicitly to
   url/3 or proxy_url/3.
   """
-  def configured_source,
-    do: %{
-      token: Application.get_env(:imgex, :secure_token),
-      domain: Application.get_env(:imgex, :imgix_domain)
-    }
+  def configured_source, do: Application.get_all_env(:imgex) |> Enum.into(%{})
 
   @doc """
   Generates a secure Imgix URL from a Web Proxy source given:
@@ -27,7 +23,7 @@ defmodule Imgex do
       iex> Imgex.proxy_url "http://avatars.com/john-smith.png", %{w: 400, h: 300}
       "https://my-social-network.imgix.net/http%3A%2F%2Favatars.com%2Fjohn-smith.png?h=300&w=400&s=a201fe1a3caef4944dcb40f6ce99e746"
   """
-  def proxy_url(path, params \\ %{}, source \\ configured_source()) when is_map(params) do
+  def proxy_url(path, params \\ %{}, source \\ %{}) do
     # URI-encode the public URL.
     path = "/" <> URI.encode(path, &URI.char_unreserved?/1)
 
@@ -75,12 +71,17 @@ defmodule Imgex do
       https://my-social-network.imgix.net/images/lulu.jpg?ar=3%3A4&dpr=4&h=500&s=1be6ccb379a227b8e4cfa8ebcbca2b76 4x,
       https://my-social-network.imgix.net/images/lulu.jpg?ar=3%3A4&dpr=5&h=500&s=455776036fb49c420f20d93fb59af96e 5x"
   """
-  def srcset(
-        path,
-        params \\ %{},
-        source \\ configured_source()
-      )
-      when is_map(params) do
+  def srcset(path, params \\ %{}, source \\ %{})
+
+  def srcset(path, params, source) when is_list(params) do
+    srcset(path, Enum.into(params, %{}), source)
+  end
+
+  def srcset(path, params, source) when is_list(source) do
+    srcset(path, params, Enum.into(source, %{}))
+  end
+
+  def srcset(path, params, source) do
     width = params[:w]
     height = params[:h]
     aspect_ratio = params[:ar]
@@ -106,16 +107,26 @@ defmodule Imgex do
       iex> Imgex.url "/images/jets.png", %{con: 10}, %{domain: "https://cannonball.imgix.net", token: "xxx187xxx"}
       "https://cannonball.imgix.net/images/jets.png?con=10&s=d982f04bbca4d819971496524aa5f95a"
   """
-  def url(path, params \\ %{}, source \\ %{}) when is_map(params) do
-    source = Map.merge(configured_source(), source)
+  def url(path, params \\ %{}, source \\ %{})
+
+  def url(path, params, source) when is_list(params) do
+    url(path, Enum.into(params, %{}), source)
+  end
+
+  def url(path, params, source) when is_list(source) do
+    url(path, params, Enum.into(source, %{}))
+  end
+
+  def url(path, params, source) do
+    %{domain: domain, token: token} = Map.merge(configured_source(), source)
 
     # Add query parameters to the path.
-    path = path_with_params(path, params)
-    url = source.domain <> path
+    full_path = path_with_params(path, params)
+    url = domain <> full_path
 
-    if token = source.token do
+    if token do
       # Use a md5 hash of the path and secret token as a signature.
-      signature = Base.encode16(:erlang.md5(token <> path), case: :lower)
+      signature = Base.encode16(:erlang.md5(token <> full_path), case: :lower)
 
       # Append the signature to verify the request is valid and return the URL.
       if params == %{} do
@@ -130,7 +141,7 @@ defmodule Imgex do
 
   defp path_with_params(path, params) when params == %{}, do: path
 
-  defp path_with_params(path, params) when is_map(params) do
+  defp path_with_params(path, params) do
     path <> "?" <> URI.encode_query(params)
   end
 
@@ -171,7 +182,7 @@ defmodule Imgex do
 
   @default_srcset_target_ratios [1, 2, 3, 4, 5]
 
-  defp build_srcset_pairs(path, params, source) when is_map(params) do
+  defp build_srcset_pairs(path, params, source) do
     @default_srcset_target_widths
     |> Enum.map(fn width ->
       updated_params = Map.put(params, :w, width)
@@ -180,7 +191,7 @@ defmodule Imgex do
     |> Enum.join(",\n")
   end
 
-  defp build_dpr_srcset(path, params, source) when is_map(params) do
+  defp build_dpr_srcset(path, params, source) do
     Enum.map(@default_srcset_target_ratios, fn ratio ->
       updated_params = Map.put(params, :dpr, ratio)
       url(path, updated_params, source) <> " #{ratio}x"
